@@ -1,0 +1,83 @@
+# deploy.yml
+# CI/CD for the AVD lab: lint and preview on every change,
+# deploy only from the main branch. Signs in with OIDC (no passwords).
+
+name: Deploy AVD lab
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['infra/**', '.github/workflows/deploy.yml']
+  push:
+    branches: [main]
+    paths: ['infra/**', '.github/workflows/deploy.yml']
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: avdlab-deploy
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-avdlab
+  TEMPLATE_FILE: infra/main.bicep
+
+jobs:
+  validate:
+    name: Lint and what-if
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Lint Bicep
+        run: az bicep lint --file $TEMPLATE_FILE
+
+      - name: Preview changes (what-if)
+        run: az deployment group what-if --resource-group $RESOURCE_GROUP --template-file $TEMPLATE_FILE
+
+  deploy:
+    name: Deploy to Azure
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep
+        id: deploy
+        run: |
+          KV_NAME=$(az deployment group create \
+            --resource-group $RESOURCE_GROUP \
+            --template-file $TEMPLATE_FILE \
+            --name "gh-run-${{ github.run_number }}" \
+            --query properties.outputs.keyVaultName.value -o tsv)
+          echo "kv_name=$KV_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create self-signed certificate in Key Vault
+        run: |
+          KV="${{ steps.deploy.outputs.kv_name }}"
+          if az keyvault certificate show --vault-name "$KV" --name avdlab-selfsigned > /dev/null 2>&1; then
+            echo "Certificate already exists, skipping."
+          else
+            az keyvault certificate create --vault-name "$KV" --name avdlab-selfsigned \
+              --policy "$(az keyvault certificate get-default-policy)"
+          fi
