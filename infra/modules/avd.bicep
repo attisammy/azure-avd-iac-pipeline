@@ -38,7 +38,7 @@ resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2024-04-03' = {
     preferredAppGroupType: 'Desktop'
     validationEnvironment: false
     startVMOnConnect: false
-    customRdpProperty: 'drivestoredirect:s:;redirectclipboard:i:0;redirectprinters:i:1;'
+    customRdpProperty: 'drivestoredirect:s:;redirectclipboard:i:0;redirectprinters:i:0;targetisaadjoined:i:1;'
     registrationInfo: {
       expirationTime: tokenExpiration
       registrationTokenOperation: 'Update'
